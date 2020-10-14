@@ -22,7 +22,6 @@ const uint8_t right_photoresistor_pin = A6;
 const uint8_t trigPin = 4;
 const uint8_t echoPin= 2;
 int photores_d;
-int;
 
 long duration; // variable for the duration of sound wave travel
 int distance; // variable for the distance measurement
@@ -40,7 +39,18 @@ void setup() {
   Serial.begin(9600);
 
 }
-void scan(){}
+void scan(){
+    headServo.write(0);
+    delay(200);
+    int center = get_ultrasonic_reading();
+    delay(200);
+    headServo.write(45);
+    delay(500); 
+    headServo.write(-45);
+    delay(500); 
+    headServo.write(0);
+
+  }
 
 int get_ultrasonic_reading(){
   digitalWrite(trigPin, LOW);
@@ -60,11 +70,16 @@ int get_ultrasonic_reading(){
   return distance;
 }
 
-void walk(int delay_time){
-    
+void walk(int delay_time, int turn){
+    midLegServo.write(90+height_ang);   
     delay(delay_time); 
-    rightLegServo.write(stride_ang);
-    leftLegServo.write(-stride_ang);
+    rightLegServo.write(90+stride_ang);
+    leftLegServo.write(90+stride_ang);
+    delay(delay_time); 
+    midLegServo.write(90-height_ang);   
+    delay(delay_time); 
+    rightLegServo.write(90-stride_ang);
+    leftLegServo.write(90-stride_ang);
     delay(delay_time); 
 
 }
@@ -74,25 +89,11 @@ void get_light_diff(){
 }
 void loop() {
 
+  walk(1000);
+  //forward_dis = get_ultrasonic_reading();
+  //if forward_dis < 15{
+  //  scan();
+  //}
 
 
-  
-  /*rightLegServo.write(pos)
-  for (pos = 0; pos <= 90; pos += 1) { // goes from 0 degrees to 180 degrees
-    // in steps of 1 degree
-    //headServo.write(pos);
-    //rightLegServo.write(pos); 
-    //leftLegServo.write(pos); 
-    //midLegServo.write(pos);   
-    //right_photores_val = analogRead(right_photoresistor_pin);
-    Serial.println(right_photores_val);
-    delay(15);                       //
-  }
-  for (pos = 90; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
-    //headServo.write(pos);
-    //rightLegServo.write(pos); 
-    //leftLegServo.write(pos); 
-    //midLegServo.write(pos);       
-    delay(15);                // waits 15ms for the servo to reach the position
-  }*/
 }
