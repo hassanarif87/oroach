@@ -10,9 +10,9 @@
 #define UART_RATE 9600
 
 #define AVOIDANCE_SAT 16.0
-#define PHOTO_SAT 16.0
+#define PHOTO_SAT 30.0
 #define AVOIDANCE_GAIN 0.5
-#define PHOTO_GAIN 0.5
+#define PHOTO_GAIN 1
 
 
 // map(x, 1, 50, 50, -100)
@@ -32,20 +32,38 @@ const uint8_t right_photoresistor_pin = A6;
 const uint8_t trigPin = 4;
 const uint8_t echoPin = 2;
 
-float photo_g = 0.0;
-float avoidance_g = 0.0;
-float turn_g = 0.0;
+enum States {
+  IDL,
+  AUTONOMOUS, 
+  SCAN, 
+  MANUAL};
+
+struct ControlStates {
+  int walk_delay = 200;
+  int stride_ang = 30;
+  int height_ang = 25;
+  float photo_g = 0.0;
+  float avoidance_g = 0.0;
+  float turn_g = 0.0;
+  uint8_t n_stride = 0;
+  uint8_t n_stride_cycle = 3;
+};
+//float photo_g = 0.0;
+//float avoidance_g = 0.0;
+//float turn_g = 0.0;
 
 long duration; // variable for the duration of sound wave travel
 int distance; // variable for the distance measurement
-
-int stride_ang = 30;
-int height_ang = 25;
-uint8_t n_stride = 3;
+int incomingByte = 0;
+//int stride_ang = 30;
+//int height_ang = 25;
+//uint8_t n_stride = 3;
 
 int center;
 int left;
 int right;
+States state = IDL; 
+ControlStates cs;
 void setup() {
   headServo.attach(headPin);
   rightLegServo.attach(rightLegPin);
@@ -92,7 +110,7 @@ int get_ultrasonic_reading(){
   duration = pulseIn(echoPin, HIGH);
   // Calculating the distance
   distance = duration * 0.034 / 2; // Speed of sound wave divided by 2 (go and back)
-  // Displays the distance on the Serial Monitor
+  //Displays the distance on the Serial Monitor
   Serial.print("Distance: ");
   Serial.print(distance);
   Serial.println(" cm");
@@ -100,29 +118,30 @@ int get_ultrasonic_reading(){
 }
 
 void walk(int delay_time, int turn) {
-  midLegServo.write(MIDLEG - height_ang);
+  midLegServo.write(MIDLEG - cs.height_ang);
   delay(delay_time);
-  rightLegServo.write(RIGHTLEG + stride_ang - turn);
-  leftLegServo.write(LEFTLEG + stride_ang + turn);
+  rightLegServo.write(RIGHTLEG + cs.stride_ang - turn);
+  leftLegServo.write(LEFTLEG + cs.stride_ang + turn);
   delay(delay_time);
-  midLegServo.write(MIDLEG + height_ang);
+  midLegServo.write(MIDLEG + cs.height_ang);
   delay(delay_time);
-  rightLegServo.write(RIGHTLEG - stride_ang + turn);
-  leftLegServo.write(LEFTLEG - stride_ang - turn);
+  rightLegServo.write(RIGHTLEG - cs.stride_ang + turn);
+  leftLegServo.write(LEFTLEG - cs.stride_ang - turn);
   delay(delay_time);
+  cs.n_stride;
 }
 
 void get_light_diff() {
-  int saturation = 30;
+  
   //photores_d = analogRead(right_photoresistor_pin) - analogRead(left_photoresistor_pin);
   float photores_right =25.0/173.0 * analogRead(right_photoresistor_pin);
   float photores_left = 25.0/231.0 * analogRead(left_photoresistor_pin);
-  photo_g = photores_right - photores_left;
+  cs.photo_g = photores_right - photores_left;
   Serial.print("Light diff: ");
-  Serial.println(photo_g);
+  Serial.println(cs.photo_g);
 }
 
-void avoidance(){
+void update_avoidance(){
   float right_turn = 0;
   float left_turn = 0;
   scan();
@@ -133,36 +152,63 @@ void avoidance(){
     right_turn = -AVOIDANCE_GAIN*(30 - right);    
   }
   if (left_turn > abs(right_turn)){
-    avoidance_g = min(AVOIDANCE_SAT, left_turn);
+    cs.avoidance_g = min(AVOIDANCE_SAT, left_turn);
   } else {
-    avoidance_g = max(-AVOIDANCE_SAT, right_turn);
+    cs.avoidance_g = max(-AVOIDANCE_SAT, right_turn);
   }
 }
 
 void update_turn_gains(){
-  if (abs(avoidance_g) > 15){
-    turn_g =  avoidance_g;
+  if (abs(cs.avoidance_g) > 15){
+    cs.turn_g =  cs.avoidance_g;
   } else  {
-    turn_g = avoidance_g + photo_g;
+    cs.turn_g = cs.avoidance_g + cs.photo_g;
+  }
+  Serial.println("turn gain");
+  Serial.println(cs.turn_g);
+}
+
+void state_machine(){
+  switch (state) {
+    case IDL:
+      Serial.println("Idl");
+      stand_stance();
+      break;
+    case AUTONOMOUS:
+    // statements
+      break;
+    case SCAN:
+    // statements
+      break;
+    case MANUAL:
+    // statements
+      break;
+    default:
+    // statements
+      break;
   }
 }
 void loop() {
-  stand_stance();  
-  delay(100);
-  avoidance();
-  update_turn_gains();
-  for (int i = 0; i < n_stride ; i++)
-  {
-    walk(200, turn_g);
-    delay(500);
-    get_light_diff();
-    delay(500);
-    int forward_dis = get_ultrasonic_reading();
-    if (forward_dis < 15) {
-      Serial.println("Front");
-      avoidance();
-    }
+  if (Serial.available() > 0) {
+    // read the incoming byte:
+    incomingByte = Serial.read();
+    Serial.print("I received: ");
+    Serial.println(incomingByte);
   }
-
-
+  state_machine();
+  
+  delay(100);
+  get_light_diff();
+  if (cs.n_stride_cycle == cs.n_stride){
+      update_avoidance();
+      cs.n_stride = 0;
+  }
+  update_turn_gains();
+  walk(cs.walk_delay, cs.turn_g);
+  int forward_dis = get_ultrasonic_reading();
+  if (forward_dis < 15) {
+    Serial.println("Front");
+    update_avoidance();
+    update_turn_gains();
+  }
 }
