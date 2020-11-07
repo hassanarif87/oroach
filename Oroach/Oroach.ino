@@ -36,10 +36,12 @@ enum States {
   IDL,
   AUTONOMOUS, 
   SCAN, 
-  MANUAL};
+  MANUAL
+  };
 
 struct ControlStates {
-  int walk_delay = 200;
+  int walk_g = 0;
+  //int walk_delay = 200;
   int stride_ang = 30;
   int height_ang = 25;
   float photo_g = 0.0;
@@ -47,14 +49,19 @@ struct ControlStates {
   float turn_g = 0.0;
   uint8_t n_stride = 0;
   uint8_t n_stride_cycle = 3;
+  States state = IDL; 
+
 };
+
+
+
 //float photo_g = 0.0;
 //float avoidance_g = 0.0;
 //float turn_g = 0.0;
 
 long duration; // variable for the duration of sound wave travel
 int distance; // variable for the distance measurement
-int incomingByte = 0;
+String inString = "";
 //int stride_ang = 30;
 //int height_ang = 25;
 //uint8_t n_stride = 3;
@@ -62,7 +69,6 @@ int incomingByte = 0;
 int center;
 int left;
 int right;
-States state = IDL; 
 ControlStates cs;
 void setup() {
   headServo.attach(headPin);
@@ -117,7 +123,13 @@ int get_ultrasonic_reading(){
   return distance;
 }
 
-void walk(int delay_time, int turn) {
+void walk(int speed_g, int turn) {
+  delay_time = map(speed_g, 0, 5, 1000, 100);
+  if speed_g == 0 {
+    break;
+  } else {
+  Serial.print("n Strides");
+  Serial.println(cs.n_stride);
   midLegServo.write(MIDLEG - cs.height_ang);
   delay(delay_time);
   rightLegServo.write(RIGHTLEG + cs.stride_ang - turn);
@@ -128,12 +140,12 @@ void walk(int delay_time, int turn) {
   rightLegServo.write(RIGHTLEG - cs.stride_ang + turn);
   leftLegServo.write(LEFTLEG - cs.stride_ang - turn);
   delay(delay_time);
-  cs.n_stride;
+  cs.n_stride++;
+  }
 }
 
 void get_light_diff() {
   
-  //photores_d = analogRead(right_photoresistor_pin) - analogRead(left_photoresistor_pin);
   float photores_right =25.0/173.0 * analogRead(right_photoresistor_pin);
   float photores_left = 25.0/231.0 * analogRead(left_photoresistor_pin);
   cs.photo_g = photores_right - photores_left;
@@ -164,51 +176,107 @@ void update_turn_gains(){
   } else  {
     cs.turn_g = cs.avoidance_g + cs.photo_g;
   }
-  Serial.println("turn gain");
+  Serial.print("Turn gain: ");
   Serial.println(cs.turn_g);
 }
 
 void state_machine(){
-  switch (state) {
+  Serial.println("Entering StateMachine");
+  switch (cs.state) {
     case IDL:
       Serial.println("Idl");
       stand_stance();
-      break;
-    case AUTONOMOUS:
-    // statements
+      cs.state = AUTONOMOUS;
+      cs.n_stride = 0;
       break;
     case SCAN:
-    // statements
-      break;
+      Serial.println("Scan");
+      update_avoidance();
+      cs.state = AUTONOMOUS;
+      cs.n_stride = 0;
+      break; 
+    case AUTONOMOUS:
+      Serial.println("Auto");
+      walk(cs.walk_delay, cs.turn_g);
+      Serial.print("Front Scan");
+      int forward_dis = get_ultrasonic_reading();
+      Serial.println(forward_dis);
+      if (forward_dis < 15 || cs.n_stride_cycle <= cs.n_stride) {
+        // GOTO Avoidance 
+        cs.state = SCAN;
+      }
+      break; 
     case MANUAL:
-    // statements
+      Serial.println("Manual");
+      // statements
+      void manual_control(){
+
       break;
     default:
+      Serial.println("Default");
     // statements
       break;
+  }
+  Serial.println("Exiting StateMachine");
+
+}
+
+void manual_control(){
+
+// 0 No new input
+// 1 toggle
+// 2 forward
+// 3 right
+// 4 left
+// 5 back
+  if (cs.state == MANUAL){
+
+    switch (serial_inputs) {
+      case FORWARD:
+        //do something when var equals 1
+        break;
+      case BACK:
+        //do something when var equals 2
+        break;
+      case RIGHT:
+        //do something when var equals 2
+        break;
+      case LEFT:
+        //do something when var equals 2
+        break;
+      case TOGGLE:
+        cd.state = IDL;
+        break;
+      default:
+        // if nothing else matches, do the default
+        // default is optional
+        break;
+    }
+  } else {
+    cd.state = IDL;
   }
 }
 void loop() {
-  if (Serial.available() > 0) {
-    // read the incoming byte:
-    incomingByte = Serial.read();
-    Serial.print("I received: ");
-    Serial.println(incomingByte);
+
+  while (Serial.available() > 0) {
+    int inChar = Serial.read();
+    if (isDigit(inChar)) {
+      // convert the incoming byte to a char and add it to the string:
+      inString = (char)inChar;
+    }
+    // if you get a newline, print the string, then the string's value:
+    if (inChar == '\n') {
+      Serial.print("Value:");
+      Serial.println(inString.toInt());
+      cs.state = inString.toInt();
+    }
   }
+  delay(100);
+  Serial.print("Current State: ");
+  Serial.println(cs.state);
+
   state_machine();
-  
   delay(100);
   get_light_diff();
-  if (cs.n_stride_cycle == cs.n_stride){
-      update_avoidance();
-      cs.n_stride = 0;
-  }
   update_turn_gains();
-  walk(cs.walk_delay, cs.turn_g);
-  int forward_dis = get_ultrasonic_reading();
-  if (forward_dis < 15) {
-    Serial.println("Front");
-    update_avoidance();
-    update_turn_gains();
-  }
 }
