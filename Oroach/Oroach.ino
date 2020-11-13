@@ -8,12 +8,12 @@
 #define RIGHTLEG 94
 #define MIDLEG 87
 #define UART_RATE 9600
-
-#define AVOIDANCE_SAT 16.0
-#define PHOTO_SAT 25.0
+//Auto
+#define AVOIDANCE_SAT 20.0
+#define PHOTO_SAT 20.0
 #define AVOIDANCE_GAIN 0.5
-#define PHOTO_GAIN 1
-//Manual Sat
+#define PHOTO_GAIN 1.5
+//Manual
 #define WALK_SAT 5
 #define TURN_SAT 15
 
@@ -22,12 +22,10 @@ Servo rightLegServo;
 Servo leftLegServo;
 Servo midLegServo;
 
-
 const uint8_t headPin = 3; // D3 head
 const uint8_t leftLegPin = 5; // D5 Left leg
 const uint8_t rightLegPin = 6; // D9 Right leg
 const uint8_t midLegPin = 9; // D9 head
-
 const uint8_t left_photoresistor_pin = A7;
 const uint8_t right_photoresistor_pin = A6;
 const uint8_t trigPin = 4;
@@ -48,29 +46,37 @@ enum ManualCmds {
   TOGGLE
   };
 struct ControlStates {
-  int walk_g = 3;
-  //int walk_delay = 200;
-  int stride_ang = 20;
-  int height_ang = 25;
+  uint8_t walk_g = 3;
+  uint8_t stride_ang = 20;
+  uint8_t height_ang = 25;
   float photo_g = 0.0;
   float avoidance_g = 0.0;
   float turn_g = 0.0;
   uint8_t n_stride = 0;
   uint8_t n_stride_cycle = 3;
+  int8_t headServo_cmd = 0;
+  int8_t rightLegServo_cmd= 0;
+  int8_t leftLegServo_cmd = 0;
+  int8_t midLegServo_cmd= 0;
   States state = IDL; 
-
 };
 
-int center;
-int left;
-int right;
-long duration; // variable for the duration of sound wave travel
-int distance; // variable for the distance measurement
+struct ScanStates {
+  const int8_t seq[3] = {45, 0, -45};   //{"Left", "Center", "Right}
+  int distance[3];
+  const uint8_t seq_n = 3;
+
+};
+//int center;
+//int left;
+//int right;
+//long duration; // variable for the duration of sound wave travel
+//int distance; // variable for the distance measurement
 String inString = "";
 
 ManualCmds serial_input = 0;
 ControlStates cs;
-
+ScanStates scan_s;
 void setup() {
   headServo.attach(headPin);
   rightLegServo.attach(rightLegPin);
@@ -81,23 +87,23 @@ void setup() {
   Serial.begin(UART_RATE);
 }
 void scan() {
-  int d_head = 800;
-  headServo.write(HEAD);
+  const int d_head = 800;
+  headServo.write(HEAD+scan_s.seq[1]);
   delay(200);
   //Serial.println("Center");
-  center = get_ultrasonic_reading();
+  scan_s.distance[1] = get_ultrasonic_reading();
   delay(d_head);
-  headServo.write(HEAD+45);
+  headServo.write(HEAD+scan_s.seq[0]); //+45
   //Serial.println("Left");
   delay(d_head);
-  left = get_ultrasonic_reading();
+  scan_s.distance[0] = get_ultrasonic_reading();
   delay(d_head);
-  headServo.write(HEAD-45);
+  headServo.write(HEAD + scan_s.seq[2]); // -45
   //Serial.println("Right");
   delay(d_head);
-  right= get_ultrasonic_reading();
+  scan_s.distance[2] = get_ultrasonic_reading();
   delay(d_head);
-  headServo.write(HEAD);
+  headServo.write(HEAD+ scan_s.seq[1]);
 }
 void stand_stance() {
   midLegServo.write(MIDLEG);
@@ -114,21 +120,13 @@ int get_ultrasonic_reading(){
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
   // Reads the echoPin, returns the sound wave travel time in microseconds
-  duration = pulseIn(echoPin, HIGH);
-  // Calculating the distance
-  distance = duration * 0.034 / 2; // Speed of sound wave divided by 2 (go and back)
-  //Displays the distance on the Serial Monitor
-  //Serial.print("Distance: ");
-  //Serial.print(distance);
-  //Serial.println(" cm");
-  return distance;
+  // duration * Speed of sound wave divided by 2 (go and back)
+  return  pulseIn(echoPin, HIGH) * 0.034 / 2;
 }
 
 void walk(int speed_g, int turn) {
-  int delay_time = map(speed_g, 0, 5, 1000, 100);
+  int delay_time = map(speed_g, 0, 5, 800, 200);
   if (cs.walk_g != 0) {
-    Serial.print("n Strides");
-    Serial.println(cs.n_stride);
     midLegServo.write(MIDLEG - cs.height_ang);
     delay(delay_time);
     rightLegServo.write(RIGHTLEG + cs.stride_ang - turn);
@@ -154,11 +152,11 @@ void update_avoidance(){
   float right_turn = 0;
   float left_turn = 0;
   scan();
-  if (left < 30){
-    left_turn = AVOIDANCE_GAIN*(30 - left);    
+  if (scan_s.distance[0] < 30){
+    left_turn = AVOIDANCE_GAIN*(30 - scan_s.distance[0]);    
   }
-  if (right < 30){
-    right_turn = -AVOIDANCE_GAIN*(30 - right);    
+  if (scan_s.distance[2] < 30){
+    right_turn = -AVOIDANCE_GAIN*(30 - scan_s.distance[2]);    
   }
   if (left_turn > abs(right_turn)){
     cs.avoidance_g = min(AVOIDANCE_SAT, left_turn);
@@ -208,7 +206,6 @@ void state_machine(){
         cs.state = SCAN;
       }
       break; 
-
     default:
       Serial.println("Default");
     // statements
@@ -266,6 +263,13 @@ void manual_control(){
   } else {
     cs.state = IDL;
   }
+}
+ 
+void update_servo_commands(){
+  headServo.write(HEAD + cs.headServo_cmd);
+  rightLegServo.write(RIGHTLEG + cs.rightLegServo_cmd);
+  leftLegServo.write(LEFTLEG + cs.leftLegServo_cmd);
+  midLegServo.write(MIDLEG + cs.midLegServo_cmd);
 }
 void loop() {
   while (Serial.available() > 0) {
