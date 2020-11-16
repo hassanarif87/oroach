@@ -54,16 +54,18 @@ struct ControlStates {
   float turn_g = 0.0;
   uint8_t n_stride = 0;
   uint8_t n_stride_cycle = 3;
-  int8_t headServo_cmd = 0;
-  int8_t rightLegServo_cmd= 0;
-  int8_t leftLegServo_cmd = 0;
-  int8_t midLegServo_cmd= 0;
+  int8_t head_cmd = 0;
+  int8_t rightLeg_cmd= 0;
+  int8_t leftLeg_cmd = 0;
+  int8_t midLeg_cmd= 0;
+  uint8_t walk_seq = 0;
   States state = IDL; 
 };
 
 struct ScanStates {
-  const int8_t seq[3] = {45, 0, -45};   //{"Left", "Center", "Right}
+  const int8_t seq[3] = {45, -45, 0};   //{"Left", Right", "Center"}
   int distance[3];
+  uint8_t head_seq = 0;
   const uint8_t seq_n = 3;
 
 };
@@ -75,7 +77,7 @@ struct ScanStates {
 String inString = "";
 
 ManualCmds serial_input = 0;
-ControlStates cs;
+ControlStates ctrl_s;
 ScanStates scan_s;
 void setup() {
   headServo.attach(headPin);
@@ -86,30 +88,29 @@ void setup() {
   pinMode(echoPin, INPUT);
   Serial.begin(UART_RATE);
 }
+
+
+void update_servos(){
+  headServo.write(HEAD + ctrl_s.head_cmd);
+  rightLegServo.write(RIGHTLEG + ctrl_s.rightLeg_cmd);
+  leftLegServo.write(LEFTLEG + ctrl_s.leftLeg_cmd);
+  midLegServo.write(MIDLEG + ctrl_s.midLeg_cmd);
+}
 void scan() {
   const int d_head = 800;
-  headServo.write(HEAD+scan_s.seq[1]);
-  delay(200);
-  //Serial.println("Center");
-  scan_s.distance[1] = get_ultrasonic_reading();
-  delay(d_head);
-  headServo.write(HEAD+scan_s.seq[0]); //+45
-  //Serial.println("Left");
-  delay(d_head);
-  scan_s.distance[0] = get_ultrasonic_reading();
-  delay(d_head);
-  headServo.write(HEAD + scan_s.seq[2]); // -45
-  //Serial.println("Right");
-  delay(d_head);
-  scan_s.distance[2] = get_ultrasonic_reading();
-  delay(d_head);
-  headServo.write(HEAD+ scan_s.seq[1]);
+  while( scan_s.head_seq < scan_s.seq_n ){
+    ctrl_s.head_cmd = scan_s.seq[scan_s.head_seq]; //+45
+    update_servos();
+    delay(d_head);
+    scan_s.distance[scan_s.head_seq] = get_ultrasonic_reading();
+    delay(d_head/2);
+    scan_s.head_seq ++;
+  }
 }
 void stand_stance() {
-  midLegServo.write(MIDLEG);
-  rightLegServo.write(RIGHTLEG);
-  leftLegServo.write(LEFTLEG);
-  headServo.write(HEAD);
+  ctrl_s.rightLeg_cmd= 0;
+  ctrl_s.leftLeg_cmd = 0;
+  ctrl_s.midLeg_cmd= 0;
   delay(100);
 }
 int get_ultrasonic_reading(){
@@ -126,18 +127,24 @@ int get_ultrasonic_reading(){
 
 void walk(int speed_g, int turn) {
   int delay_time = map(speed_g, 0, 5, 800, 200);
-  if (cs.walk_g != 0) {
-    midLegServo.write(MIDLEG - cs.height_ang);
-    delay(delay_time);
-    rightLegServo.write(RIGHTLEG + cs.stride_ang - turn);
-    leftLegServo.write(LEFTLEG + cs.stride_ang + turn);
-    delay(delay_time);
-    midLegServo.write(MIDLEG + cs.height_ang);
-    delay(delay_time);
-    rightLegServo.write(RIGHTLEG - cs.stride_ang + turn);
-    leftLegServo.write(LEFTLEG - cs.stride_ang - turn);
-    delay(delay_time);
-    cs.n_stride++;
+  if (ctrl_s.walk_g != 0) {
+    switch (ctrl_s.walk_seq) {
+      case 0:
+        ctrl_s.midLeg_cmd = - ctrl_s.height_ang;
+      case 1:
+        ctrl_s.rightLeg_cmd = ctrl_s.stride_ang - turn;
+        ctrl_s.midLeg_cmd = ctrl_s.stride_ang + turn;
+      case 2:
+        ctrl_s.midLeg_cmd = ctrl_s.height_ang;
+      case 3:
+        ctrl_s.rightLeg_cmd= - ctrl_s.stride_ang + turn;
+        ctrl_s.midLeg_cmd = - ctrl_s.stride_ang - turn;
+        ctrl_s.walk_seq = 0;
+        ctrl_s.n_stride++;
+    }
+  ctrl_s.walk_seq ++;
+  update_servos();
+  delay(delay_time);
   }
 }
 
@@ -145,7 +152,7 @@ void get_light_diff() {
   
   float photores_right =25.0/173.0 * analogRead(right_photoresistor_pin);
   float photores_left = 25.0/231.0 * analogRead(left_photoresistor_pin);
-  cs.photo_g = photores_right - photores_left;
+  ctrl_s.photo_g = photores_right - photores_left;
 }
 
 void update_avoidance(){
@@ -156,59 +163,59 @@ void update_avoidance(){
     left_turn = AVOIDANCE_GAIN*(30 - scan_s.distance[0]);    
   }
   if (scan_s.distance[2] < 30){
-    right_turn = -AVOIDANCE_GAIN*(30 - scan_s.distance[2]);    
+    right_turn = -AVOIDANCE_GAIN*(30 - scan_s.distance[1]);    
   }
   if (left_turn > abs(right_turn)){
-    cs.avoidance_g = min(AVOIDANCE_SAT, left_turn);
+    ctrl_s.avoidance_g = min(AVOIDANCE_SAT, left_turn);
   } else {
-    cs.avoidance_g = max(-AVOIDANCE_SAT, right_turn);
+    ctrl_s.avoidance_g = max(-AVOIDANCE_SAT, right_turn);
   }
 }
 
 void update_turn_gains(){
-  if (abs(cs.avoidance_g) > 15){
-    cs.turn_g =  cs.avoidance_g;
+  if (abs(ctrl_s.avoidance_g) > 15){
+    ctrl_s.turn_g =  ctrl_s.avoidance_g;
   } else  {
-    cs.turn_g = cs.avoidance_g + cs.photo_g;
+    ctrl_s.turn_g = ctrl_s.avoidance_g + ctrl_s.photo_g;
   }
 }
 
 void state_machine(){
-  switch (cs.state) {
+  switch (ctrl_s.state) {
     case IDL:
       //Serial.println("Idl");
       stand_stance();
-      cs.state = AUTONOMOUS;
-      cs.n_stride = 0;
+      update_servos();
+      ctrl_s.state = AUTONOMOUS;
+      ctrl_s.n_stride = 0;
       break;
     case SCAN:
       //Serial.println("Scan");
       update_avoidance();
       update_turn_gains();
-      cs.state = AUTONOMOUS;
-      cs.n_stride = 0;
+      ctrl_s.state = AUTONOMOUS;
+      ctrl_s.n_stride = 0;
       break; 
     case MANUAL:
       //Serial.println("Manual");
       manual_control();
-      walk(cs.walk_g, cs.turn_g);
+      walk(ctrl_s.walk_g, ctrl_s.turn_g);
       break;
     case AUTONOMOUS:
       //Serial.println("Auto");
       get_light_diff();
       update_turn_gains();
-      walk(cs.walk_g, cs.turn_g);
+      walk(ctrl_s.walk_g, ctrl_s.turn_g);
       //Serial.print("Front Scan");
       int forward_dis = get_ultrasonic_reading();
       //Serial.println(forward_dis);
-      if (forward_dis < 15 || cs.n_stride_cycle <= cs.n_stride) {
+      if (forward_dis < 15 || ctrl_s.n_stride_cycle <= ctrl_s.n_stride) {
         // GOTO Avoidance 
-        cs.state = SCAN;
+        ctrl_s.state = SCAN;
       }
       break; 
     default:
       Serial.println("Default");
-    // statements
       break;
   }
 }
@@ -216,14 +223,14 @@ void state_machine(){
 void check_toggle(){
   if (serial_input == TOGGLE){
     serial_input = 0;
-    if (cs.state !=MANUAL){
-      cs.state = MANUAL;
-      cs.walk_g = 0;
-      cs.turn_g = 0;
+    if (ctrl_s.state !=MANUAL){
+      ctrl_s.state = MANUAL;
+      ctrl_s.walk_g = 0;
+      ctrl_s.turn_g = 0;
     }
     else{
-      cs.state = IDL;
-      cs.walk_g = 3;
+      ctrl_s.state = IDL;
+      ctrl_s.walk_g = 3;
     }
   }
 }
@@ -233,26 +240,26 @@ void manual_control(){
 // 2 back
 // 3 right
 // 4 left
-  if (cs.state == MANUAL){
+  if (ctrl_s.state == MANUAL){
     switch (serial_input) {
       case FORWARD:
-        cs.walk_g+=1;
-        cs.walk_g = min(cs.walk_g, WALK_SAT);
+        ctrl_s.walk_g+=1;
+        ctrl_s.walk_g = min(ctrl_s.walk_g, WALK_SAT);
         serial_input = 0;
         break;
       case BACK:
-        cs.walk_g-=1;
-        cs.walk_g = max(cs.walk_g, 0);
+        ctrl_s.walk_g-=1;
+        ctrl_s.walk_g = max(ctrl_s.walk_g, 0);
         serial_input = 0;
         break;
       case RIGHT:
-        cs.turn_g+=10;
-        cs.turn_g = min(cs.turn_g, TURN_SAT);
+        ctrl_s.turn_g+=10;
+        ctrl_s.turn_g = min(ctrl_s.turn_g, TURN_SAT);
         serial_input = 0;
         break;
       case LEFT:
-        cs.turn_g-=10;
-        cs.turn_g = min(cs.turn_g, -TURN_SAT);
+        ctrl_s.turn_g-=10;
+        ctrl_s.turn_g = min(ctrl_s.turn_g, -TURN_SAT);
         serial_input = 0;
         break;
       default:
@@ -261,16 +268,10 @@ void manual_control(){
         break;
     }
   } else {
-    cs.state = IDL;
+    ctrl_s.state = IDL;
   }
 }
  
-void update_servo_commands(){
-  headServo.write(HEAD + cs.headServo_cmd);
-  rightLegServo.write(RIGHTLEG + cs.rightLegServo_cmd);
-  leftLegServo.write(LEFTLEG + cs.leftLegServo_cmd);
-  midLegServo.write(MIDLEG + cs.midLegServo_cmd);
-}
 void loop() {
   while (Serial.available() > 0) {
     int inChar = Serial.read();
@@ -290,7 +291,7 @@ void loop() {
   state_machine();
   delay(10);
   Serial.print("Walk gain: ");
-  Serial.print(cs.walk_g);
+  Serial.print(ctrl_s.walk_g);
   Serial.print(" Turn gain: ");
-  Serial.println(cs.turn_g);
+  Serial.println(ctrl_s.turn_g);
 }
